@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include <cstdlib>
+#include <time.h>
 
 #include <wiringPi.h>
 
@@ -17,6 +18,7 @@
 using namespace std;
 
 int shutdown_pressed = 0;
+int shutdown_released = 0;
 
 void shutSWISR(){
 	shutdown_pressed = 1;
@@ -29,26 +31,43 @@ int main() {
 	pinMode(SHUTDOWN_SW, INPUT);
 	pullUpDnControl(SHUTDOWN_SW, PUD_UP);
 
-	wiringPiISR(SHUTDOWN_SW, INT_EDGE_FALLING, *shutSWISR);
+	timespec down, up;
+	long delta;
+
+	int state = 0;
+
+	wiringPiISR(SHUTDOWN_SW, INT_EDGE_BOTH, *shutSWISR);
+
 
 	for(;;){
-		if(!shutdown_pressed){
-			digitalWrite(STATUS_LED, HIGH);
-			delay(500);
-			digitalWrite(STATUS_LED, LOW);
-			delay(500);
+		if(shutdown_pressed && state == 0){
+			if (digitalRead(SHUTDOWN_SW) == 0){
+				clock_gettime(CLOCK_MONOTONIC, &down);
+				shutdown_pressed = 0;
+				shutdown_released = 0;
+				cout << "ShuttingDown...started: " << down.tv_sec << endl;
+				delayMicroseconds(50);
+				shutdown_pressed = 0;
+				state = 1;
+			}
+
 		}
-		else{
-			shutdown_pressed = 0;
-			digitalWrite(STATUS_LED, HIGH);
-			delay(3000);
-			if(digitalRead(SHUTDOWN_SW) == 0){
-				cout << "ShuttingDown..." << endl;
-				int ret = system("sudo shutdown now");
-				cout << WEXITSTATUS(ret) << endl;
-				delay(500);
-				digitalWrite(STATUS_LED, LOW);
-				break;
+		if(state == 1){
+			clock_gettime(CLOCK_MONOTONIC, &up);
+			delta = up.tv_sec - down.tv_sec;
+
+			if (shutdown_pressed && digitalRead(SHUTDOWN_SW) == 1){
+				state = 0;
+			}
+			else{
+				if(delta >= 3){
+					cout << "Shutdown Now (down)!" << endl;
+					int ret = system("sudo supervisorctl stop all");
+					cout << WEXITSTATUS(ret) << endl;
+					int ret1 = system("sudo shutdown now");
+					cout << WEXITSTATUS(ret1) << endl;
+					break;
+				}
 			}
 		}
 	}
